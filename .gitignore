@@ -16,5 +16,8 @@ env/
 chroma_db/
 chroma/
 
+# Locally saved sentence-transformer model
+model/
+
 # macOS
 .DS_Store

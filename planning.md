@@ -267,7 +267,46 @@ Cross-cutting verification principle
 The thread tying this together: my 5 Test Questions section is the master acceptance test for the whole pipeline, and stages 2–4 each have a narrower structural check (token bounds, dimension count, jurisdiction filtering) that catches problems before they reach end-to-end evaluation. I'll keep the AI-generated code and my verification asserts in separate files so the tests stay honest — I won't ask the same tool to both write the chunker and certify that it passed.
 
 **Milestone 3 — Ingestion and chunking:**
+- *Tool:* Claude Code (in the IDE, with direct access to the repo and CSV).
+- *Input:* my Chunking Strategy section plus the actual `country_plus_policies.csv` (218 rows;
+  columns `Subject, Date, Body, filepath, Source`).
+- *What it produced:* the ingestion logic in `Embedding_Setup.py` — a `pandas` load of the CSV
+  and a `chunk_text()` function that normalizes whitespace and splits each policy's `Body` into
+  ~450-character, sentence-boundary-aware chunks with 75-char overlap. Each chunk is stored with
+  its row metadata (`Subject, Date, Source, filepath`) plus `row` and `chunk` index for
+  traceability.
+- *What I changed/overrode:* I had originally specified token-based, section-aware chunking
+  (~512 target). During implementation we discovered the embedding model truncates at **128
+  tokens**, so I switched to a smaller 450-char window to guarantee the full text is embedded
+  rather than silently cut off (see Spec divergence note).
+- *Verification:* re-ran ingestion and confirmed 218 policies expand to **2,000 chunks**, and
+  spot-checked that retrieval now returns substantive policy text instead of table-of-contents
+  fragments.
 
 **Milestone 4 — Embedding and retrieval:**
+- *Tool:* Claude Code for the sentence-transformers / Chroma wiring and debugging.
+- *Input:* my Retrieval Approach section plus the chunked records from Milestone 3.
+- *What it produced:* embedding + storage in `Embedding_Setup.py` (model `all-MiniLM-L12-v2` →
+  384-dim vectors, persisted to a Chroma `PersistentClient` at `./chroma_db` with
+  `hnsw:space: cosine`), and the `retrieve()` function in `rag_query.py` that embeds the query,
+  runs `collection.query(...)` with distances, converts cosine distance to a similarity score,
+  and filters out chunks below a `MIN_SIMILARITY` threshold (0.15).
+- *What I changed/overrode:* I used `all-MiniLM-L12-v2` (not L6 as originally planned), set
+  top-k to **3** instead of 5, and have not yet implemented the planned country metadata filter.
+- *Verification:* confirmed the index holds 2,000 384-dim vectors, and the query "What is
+  Iceland's Data Privacy Policy?" returns Iceland chunks at the top with similarity ~0.72.
 
 **Milestone 5 — Generation and interface:**
+- *Tool:* Claude Code for code; Groq-hosted `llama-3.3-70b-versatile` as the runtime LLM.
+- *Input:* the project's grounding requirement (answer only from retrieved context, cite
+  sources) and the recommended Gradio interface pattern.
+- *What it produced:* the generation layer in `rag_query.py` — a grounding system prompt that
+  forbids outside knowledge, defines a fixed refusal string when context is insufficient, and
+  requires citations by country + bracket number — wrapped in an `ask()` function returning
+  `{"answer", "sources"}`; plus `app.py`, a Gradio web UI (question box, Ask button,
+  Enter-to-submit, separate Answer / Retrieved-from panes, and clickable example questions).
+- *What I changed/overrode:* generation uses Groq (`llama-3.3-70b-versatile`) at low
+  temperature (0.2) for grounded output, rather than the Claude/GPT-4 placeholder in the plan.
+- *Verification:* ran the pipeline end-to-end through both `rag_query.py` and the Gradio
+  `handle_query()`; confirmed grounded, cited answers and that the server serves on
+  http://localhost:7860 (HTTP 200).
